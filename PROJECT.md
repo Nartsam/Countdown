@@ -37,6 +37,7 @@
 **第三轮（构建与打包）：**
 1. 程序默认不申请管理员权限；仅在操作管理员权限目标程序时由用户手动以管理员身份运行。
 2. 构建时若当前目录存在 `icon.png`，自动将其嵌入为最终 `Countdown.exe` 的自定义图标。
+3. 程序运行时标题栏小图标和任务栏图标也使用 exe 内嵌图标，保证发布后仍是单文件运行，不依赖 `icon.png`。
 
 ---
 
@@ -50,6 +51,7 @@
 - ⚠️ **该编译器只支持 C# 5 语法**：不能用字符串插值 `$""`、`?.`、`nameof`、表达式体成员、自动属性初始化器等。事件处理统一用 `delegate(object s, EventArgs e) { }` 匿名方法风格。
 - 编译参数里必须带 `/codepage:65001`（源码是 UTF-8 无 BOM，含中文字符串，不带此参数在中文系统上可能按 GBK 误读）。
 - `build.bat` 会在当前目录检测 `icon.png`。若存在，则用系统自带 PowerShell + .NET/GDI+ 转成随机命名的临时 `.ico`，通过 `csc /win32icon:` 嵌入 exe 图标，编译结束后删除临时 `.ico`；若不存在，则不带图标参数编译。该流程不安装依赖、不写当前目录外文件。
+- 主窗口运行时不读取 `icon.png`，而是通过 `Icon.ExtractAssociatedIcon(Application.ExecutablePath)` 从当前 exe 提取已嵌入图标并赋给 `MainForm.Icon`。这样标题栏和任务栏使用同一份 exe 内资源，发布时仍只需要 `Countdown.exe`。
 
 ### 2.2 DPI 适配（决策 + 踩坑记录）
 
@@ -117,7 +119,7 @@ C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe /nologo /codepage:65001 
 | `Native` | 全部 P/Invoke 与输入模拟 | `MouseClickAt(Point, bool left)`、`SendKey(Keys, bool up)`、`IsExtended()`、INPUT/MOUSEINPUT/KEYBDINPUT 结构体（union 用 `LayoutKind.Explicit`） |
 | `Ui` | DPI 缩放 | `Scale`（Main 里初始化）、`S(int)` |
 | `Fmt` | 格式化工具 | `Remaining(TimeSpan)`、`Rounded(RectangleF, float)` 圆角路径 |
-| `Program` | 入口 | `SetProcessDPIAware` → 算 `Ui.Scale` → `Run(new MainForm())` |
+| `Program` | 入口 | `LoadAppIcon()` 从当前 exe 提取内嵌图标；`SetProcessDPIAware` → 算 `Ui.Scale` → `Run(new MainForm())` |
 | `MouseDot : Form` | 一个鼠标操作的悬浮圆点 | `IsLeft`、`Duration`、`Deadline`（属性，避免 CS1690 警告）、`Started`、`ClickPoint`、`Start()`、`UpdateCountdown()`、`DeleteRequested` 事件 |
 | `KeyItem` | 一个键盘操作的数据 | `KeyData`（含修饰键）、`Duration`、`Deadline`、`Remaining`（显示文本）、`DisplayName` |
 | `KeyListForm : Form` | 键盘操作悬浮列表（单例） | 构造时接收共享的 `List<KeyItem>`、`SyncLayout()`、`DeleteRow` 事件（传行号） |
@@ -131,13 +133,15 @@ C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe /nologo /codepage:65001 
 4. **CS1690 警告**：在 `MainForm` 里访问 `MouseDot`（Form 继承 `MarshalByRefObject`）的**可空值类型字段**的成员会告警，把 `Deadline` 从字段改成属性即消除。
 5. **中文源码编码**：编译必须带 `/codepage:65001`。
 6. **图标嵌入**：`csc /win32icon:` 只能接收 `.ico`，不能直接吃 PNG。当前做法是在 `build.bat` 内把 `icon.png` 缩放/居中为最大 256×256 的 PNG-compressed ICO，再传给 `csc`。临时文件名形如 `Countdown.icon.<随机>.tmp.ico`，构建后必须清理。
-7. **自动化测试与 UAC**：当前清单为 `asInvoker`，正式版不会主动弹 UAC，可直接做启动冒烟测试。若将来临时改回 `requireAdministrator`，无人值守下 `Start-Process` 会弹 UAC 等待，只能验证编译或使用不带清单的临时 exe 做启动测试。
-8. **触发点击前必须先隐藏圆点**，否则点击会落在圆点窗口自己身上（见 2.4 末尾）。
+7. **运行时窗口图标**：不要在运行时读取 `icon.png`，否则会破坏单文件运行约束。主窗口应始终从 `Application.ExecutablePath` 提取 exe 内嵌图标；悬浮圆点和按键列表 `ShowInTaskbar=false`，不需要单独设置任务栏图标。
+8. **自动化测试与 UAC**：当前清单为 `asInvoker`，正式版不会主动弹 UAC，可直接做启动冒烟测试。若将来临时改回 `requireAdministrator`，无人值守下 `Start-Process` 会弹 UAC 等待，只能验证编译或使用不带清单的临时 exe 做启动测试。
+9. **触发点击前必须先隐藏圆点**，否则点击会落在圆点窗口自己身上（见 2.4 末尾）。
 
 ## 6. 当前验证状态
 
 - ✅ 编译零错误零警告（2026-07-09）。
 - ✅ `icon.png` 存在时，`build.bat` 可生成临时 `.ico` 并通过 `/win32icon:` 编译正式 exe；PE 资源表包含 `RT_GROUP_ICON`/`RT_ICON`，构建后无临时 `.ico` 残留。
+- ✅ 主窗口运行时会从当前 exe 提取内嵌图标并设置 `MainForm.Icon`，标题栏/任务栏图标不依赖外部 `icon.png`。
 - ✅ `asInvoker` 正式版冒烟测试通过（进程启动 2 秒不退出）。
 - ✅ 第一轮 DPI 布局 bug 已修复（用户确认前的修复版本，之后用户未再报布局问题）。
 - ⚠️ 以下路径**未经真人实测**（代码逻辑推断应正常，如有问题优先排查）：组合键在真实目标程序里的效果、多显示器负坐标点击、待开始→开始→触发的全流程视觉状态、用户手动提升后对管理员目标程序注入。

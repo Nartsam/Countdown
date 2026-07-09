@@ -117,6 +117,19 @@ namespace CountdownActions
 
     static class Program
     {
+        public static Icon LoadAppIcon()
+        {
+            try
+            {
+                // 复用构建时嵌入 exe 的图标，运行时不依赖 icon.png。
+                return Icon.ExtractAssociatedIcon(Application.ExecutablePath);
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
         [STAThread]
         static void Main()
         {
@@ -349,6 +362,8 @@ namespace CountdownActions
         public MainForm()
         {
             Text = "倒计时点击器";
+            Icon appIcon = Program.LoadAppIcon();
+            if (appIcon != null) Icon = appIcon;
             FormBorderStyle = FormBorderStyle.FixedSingle;
             MaximizeBox = false;
             StartPosition = FormStartPosition.CenterScreen;
